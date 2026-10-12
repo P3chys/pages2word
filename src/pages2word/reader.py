@@ -59,10 +59,16 @@ LANGUAGE_REGIONS = {
 }  # fmt: skip
 
 
+# Language codes come from the file and end up in XML attributes: accept only BCP 47 shapes.
+_LANGUAGE_CODE = re.compile(r"[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*")
+
+
 def word_language(code: str | None) -> str | None:
     if not code:
         return None
     code = code.replace("_", "-")
+    if not _LANGUAGE_CODE.fullmatch(code):
+        return None
     if "-" in code:
         return code
     return LANGUAGE_REGIONS.get(code, code)

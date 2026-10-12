@@ -11,6 +11,7 @@ from pages2word.reader import (
     _detect_headings,
     _normalize_list_levels,
     _Table,
+    word_language,
 )
 
 
@@ -121,3 +122,17 @@ def test_unique_output_never_overwrites(tmp_path):
     assert unique_output(src).name == "a.docx"
     (tmp_path / "a.docx").touch()
     assert unique_output(src).name == "a (2).docx"
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("cs", "cs-CZ"),
+        ("en_GB", "en-GB"),
+        ("zh-Hant-TW", "zh-Hant-TW"),
+        ('cs"/><w:x a="', None),
+        ("", None),
+    ],
+)
+def test_word_language_rejects_non_codes(code, expected):
+    assert word_language(code) == expected
