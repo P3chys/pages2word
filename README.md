@@ -19,7 +19,14 @@ Options:
 - `--blank-lines N`: N or more empty lines in a row become a page break (default 4; `0` keeps them).
 - `-f`: overwrite existing output.
 
-Limitations: only the main body text is converted. Tables, text boxes, shapes, footnotes and Apple Pencil drawings are skipped (a warning is printed for embedded objects).
+What else is converted:
+- **Tables:** become Word tables (style "Table Grid"). Cell text keeps its formatting, header rows repeat on each page, and merged cells stay merged. Numbers, dates and checkboxes are shown as plain values.
+- **Text boxes and shapes with text:** become a framed box at the same spot in the text.
+- **Footnotes:** become real Word footnotes.
+- **Apple Pencil drawings:** float next to the text they were drawn on, as pictures.
+- **Objects pinned to a page rather than placed in the text:** Pages doesn't store which text they sit next to, so they are collected at the end of the document under "Objekty ze strany N".
+
+Still skipped, with a warning: shapes without text, charts, video and equations. Headers and footers are also not converted.
 
 ## Windows app (Pages2Word.exe)
 
