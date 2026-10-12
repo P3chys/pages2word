@@ -1,0 +1,43 @@
+"""The editable style template: a sample .docx showing every style the converter uses.
+
+The user restyles it in Word (Home > Styles > right-click > Modify) and saves it;
+conversions then take their styles, page size and margins from it.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from .reader import Document, Paragraph, Run
+from .writer import write_docx
+
+
+def _p(text: str, **kw) -> Paragraph:
+    return Paragraph(items=[Run(text, lang="cs-CZ")], **kw)
+
+
+SAMPLE = [
+    _p("Vzor stylů pro převod z Pages", heading=0),
+    _p(
+        "Tento dokument určuje vzhled všech převedených souborů. Změňte styly přímo ve Wordu: "
+        "karta Domů → Styly → klikněte pravým tlačítkem na styl → Upravit. "
+        "Pak dokument uložte a zavřete. Text zde se nikam nepřenáší, důležité jsou jen styly, "
+        "velikost stránky a okraje."
+    ),
+    _p("Nadpis 1 – název kapitoly", heading=1),
+    _p("Běžný text (styl Normální). Takhle bude vypadat většina poznámek."),
+    _p("Nadpis 2 – oddíl", heading=2),
+    _p("Odrážky používají styl Odstavec se seznamem:"),
+    _p("První úroveň odrážky", list_kind="bullet", level=0),
+    _p("Druhá úroveň odrážky", list_kind="bullet", level=1),
+    _p("Třetí úroveň odrážky", list_kind="bullet", level=2),
+    _p("Nadpis 3 – pododdíl", heading=3),
+    _p("Číslovaný seznam", list_kind="number", level=0, restart=True),
+    _p("Druhá položka", list_kind="number", level=0),
+]
+
+
+def make_style_template(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_docx(Document(SAMPLE, "cs-CZ"), path, empty_lines_to_page_break=0)
+    return path

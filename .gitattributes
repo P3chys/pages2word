@@ -1,0 +1,3 @@
+# Word imports macros as ANSI (cp1250) with CRLF; keep these byte-exact
+*.bas binary
+packaging/NAVOD.txt -text

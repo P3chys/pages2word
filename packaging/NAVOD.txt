@@ -1,0 +1,41 @@
+﻿PAGES2WORD – převod dokumentů z Pages do Wordu
+==============================================
+
+1) PŘEVOD SOUBORŮ
+   Přetáhněte jeden nebo více souborů .pages myší na ikonu Pages2Word.exe.
+   Vedle každého souboru vznikne stejnojmenný .docx (nic se nepřepisuje –
+   pokud .docx už existuje, nový dostane číslo, např. "Přednášky (2).docx").
+
+   Nebo Pages2Word.exe spusťte dvojklikem a klikněte na "Převést soubory…".
+
+   Při prvním spuštění může Windows zobrazit modré okno "Systém Windows
+   ochránil váš počítač" – klikněte na "Další informace" → "Přesto spustit".
+
+2) OTEVÍRÁNÍ PŘÍMO VE WORDU (doporučeno)
+   Spusťte Pages2Word.exe a klikněte na "Propojit s Wordem".
+   Pak stačí na soubor .pages dvakrát kliknout a otevře se rovnou ve Wordu.
+   (Pravým tlačítkem → "Převést do Wordu (.docx)" jen vytvoří soubor.)
+   Pokud se Windows zeptá, jakou aplikací otevřít, vyberte Pages2Word.
+   Pozor: Pages2Word.exe po propojení nepřesouvejte (nebo propojte znovu).
+
+3) TLAČÍTKO "IMPORT Z PAGES" VE WORDU (volitelné)
+   Vloží obsah souboru .pages do právě otevřeného dokumentu – převezme
+   přitom styly tohoto dokumentu. Vyžaduje krok 2.
+   a) Ve Wordu stiskněte Alt+F11 (otevře se editor maker).
+   b) Vlevo klikněte na "Normal", pak nabídka File → Import File…
+      a vyberte ImportPages.bas. Editor zavřete.
+   c) Soubor → Možnosti → Panel nástrojů Rychlý přístup →
+      "Zvolit příkazy z: Makra" → vyberte "Normal.Pages2Word.ImportPages"
+      → Přidat → OK. Nahoře ve Wordu přibude tlačítko.
+
+4) VLASTNÍ VZHLED (STYLY)
+   Pages2Word.exe → "Upravit styly…". Ve Wordu se otevře vzorový dokument.
+   Změňte styly: karta Domů → Styly → pravým tlačítkem na styl (Normální,
+   Nadpis 1, Nadpis 2, Nadpis 3, Odstavec se seznamem…) → Upravit.
+   Můžete změnit i okraje a velikost stránky. Dokument uložte a zavřete.
+   Všechny další převody použijí vaše styly.
+   Návrat k původnímu vzhledu: "Obnovit výchozí styly".
+
+CO SE NEPŘEVÁDÍ: tabulky, textová pole, tvary, poznámky pod čarou a kresby
+Apple Pencil. Písmo a velikosti z Pages se záměrně nepřebírají – použijí se
+styly Wordu, takže fungují nadpisy, seznamy, obsah i kontrola pravopisu.

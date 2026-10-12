@@ -1,0 +1,27 @@
+[project]
+name = "pages2word"
+version = "0.1.0"
+description = "Convert Apple Pages documents to clean Word documents"
+readme = "README.md"
+authors = [
+    { name = "P3chys", email = "pechysadam@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "keynote-parser>=1.14.5.0",
+    "python-docx>=1.2.0",
+]
+
+[project.scripts]
+pages2word = "pages2word:main"
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.22.3",
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
