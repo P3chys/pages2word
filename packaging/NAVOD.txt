@@ -36,6 +36,10 @@
    Všechny další převody použijí vaše styly.
    Návrat k původnímu vzhledu: "Obnovit výchozí styly".
 
-CO SE NEPŘEVÁDÍ: tabulky, textová pole, tvary, poznámky pod čarou a kresby
-Apple Pencil. Písmo a velikosti z Pages se záměrně nepřebírají – použijí se
-styly Wordu, takže fungují nadpisy, seznamy, obsah i kontrola pravopisu.
+CO SE PŘEVÁDÍ: text, nadpisy, seznamy, obrázky, tabulky, textová pole,
+poznámky pod čarou a kresby Apple Pencil (jako obrázek vedle textu).
+Objekty, které jsou v Pages připnuté ke stránce (ne k textu), se přidají
+na konec dokumentu s popiskem "Objekty ze strany N".
+NEPŘEVÁDÍ SE: tvary bez textu, grafy, videa, rovnice a záhlaví/zápatí.
+Písmo a velikosti z Pages se záměrně nepřebírají – použijí se styly Wordu,
+takže fungují nadpisy, seznamy, obsah i kontrola pravopisu.

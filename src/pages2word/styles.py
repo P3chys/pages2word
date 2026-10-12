@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .reader import Document, Paragraph, Run
+from .model import Cell, Document, Footnote, Paragraph, Run, Table
 from .writer import write_docx
 
 
@@ -34,6 +34,25 @@ SAMPLE = [
     _p("Nadpis 3 – pododdíl", heading=3),
     _p("Číslovaný seznam", list_kind="number", level=0, restart=True),
     _p("Druhá položka", list_kind="number", level=0),
+    _p(
+        "Tabulky používají styl tabulky Mřížka tabulky (Návrh tabulky → Styly tabulky):"
+    ),
+    Table(
+        rows=[
+            [Cell([_p("Záhlaví")]), Cell([_p("Druhý sloupec")])],
+            [Cell([_p("Buňka")]), Cell([_p("Buňka")])],
+        ],
+        header_rows=1,
+    ),
+    Paragraph(
+        items=[
+            Run(
+                "Poznámky pod čarou používají styly Text poznámky pod čarou a Znak poznámky pod čarou.",
+                lang="cs-CZ",
+            ),
+            Footnote([_p("Ukázka poznámky pod čarou.")]),
+        ]
+    ),
 ]
 
 

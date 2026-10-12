@@ -1,8 +1,9 @@
-"""Turn the body text of a .pages document into a simple semantic model.
+"""Turn a .pages document into the semantic model (see model.py).
 
 Only meaning is carried over (headings, lists, bold/italic/…, colours,
-language, images). Fonts, sizes and spacing are deliberately dropped so the
-Word side can use its own styles.
+language, images, tables, text boxes, footnotes, pencil drawings). Fonts,
+sizes and spacing are deliberately dropped so the Word side can use its own
+styles.
 """
 
 from __future__ import annotations
@@ -12,22 +13,60 @@ import itertools
 import logging
 import re
 from collections import Counter
-from dataclasses import dataclass, field
 from typing import Any
 
+from google.protobuf.internal.decoder import _DecodeVarint
 from keynote_parser.versions.v14_5.generated import TSDArchives_pb2 as TSD
 from keynote_parser.versions.v14_5.generated import TSSArchives_pb2 as TSS
 from keynote_parser.versions.v14_5.generated import TSWPArchives_pb2 as TSWP
 
 from .iwa import Package
+from .model import (
+    Block,
+    Document,
+    Footnote,
+    Image,
+    PageBreak,
+    Paragraph,
+    Pencil,
+    Run,
+    Table,
+    TextBox,
+)
+from .tables import TableReader
+
+__all__ = [
+    "Document",
+    "Image",
+    "PageBreak",
+    "PagesReader",
+    "Paragraph",
+    "Run",
+    "word_language",
+]
 
 log = logging.getLogger(__name__)
 
 T_STORAGE = 2001
 T_DRAWABLE_ATTACHMENT = 2003
+T_FOOTNOTE = 2008
+T_SHAPE_INFO = 2011
+T_PENCIL = 2016
+T_SHAPE = 3004
 T_IMAGE = 3005
+T_GROUP = 3008
+T_TABLE_INFO = 6000
+T_FLOATING_DRAWABLES = 10010  # TP.FloatingDrawablesArchive (no published proto)
+
+UNSUPPORTED = {
+    T_SHAPE: "tvar bez textu",
+    3007: "video/zvuk",
+    5021: "graf",
+    2015: "rovnice",
+}
 
 PARAGRAPH_BREAKS = "\n "
+LINE_BREAK = " "
 PAGE_BREAKS = "\x0c\x04\x05"
 OBJECT_REPLACEMENT = "￼"
 
@@ -74,81 +113,6 @@ def word_language(code: str | None) -> str | None:
     return LANGUAGE_REGIONS.get(code, code)
 
 
-@dataclass
-class Run:
-    text: str
-    bold: bool = False
-    italic: bool = False
-    underline: bool = False
-    strike: bool = False
-    script: str | None = None  # "super" | "sub"
-    caps: bool = False
-    color: str | None = None  # RRGGBB
-    highlight: str | None = None  # RRGGBB
-    lang: str | None = None
-    size: float | None = None
-
-    def same_format(self, other: Run) -> bool:
-        return all(
-            getattr(self, f) == getattr(other, f)
-            for f in (
-                "bold",
-                "italic",
-                "underline",
-                "strike",
-                "script",
-                "caps",
-                "color",
-                "highlight",
-                "lang",
-                "size",
-            )
-        )
-
-
-@dataclass
-class Image:
-    data: bytes
-    filename: str
-    width: float  # points
-    height: float
-
-
-@dataclass
-class PageBreak:
-    pass
-
-
-@dataclass
-class Paragraph:
-    items: list[Run | Image | PageBreak] = field(default_factory=list)
-    list_kind: str | None = None  # "bullet" | "number"
-    level: int = 0
-    number_format: str = "decimal"
-    number_suffix: str = "."  # "." | ")" | "()"
-    restart: bool = False
-    heading: int | None = None  # 0 = title, 1..n
-    align: str | None = None
-    left_indent: float = 0.0
-    page_break_before: bool = False
-
-    @property
-    def text(self) -> str:
-        return "".join(i.text for i in self.items if isinstance(i, Run))
-
-    @property
-    def is_empty(self) -> bool:
-        return not self.text.strip() and not any(
-            isinstance(i, Image) for i in self.items
-        )
-
-
-@dataclass
-class Document:
-    paragraphs: list[Paragraph]
-    language: str | None
-
-
 class _Table:
     """A TSWP attribute table: value in effect from each character index on."""
 
@@ -176,14 +140,48 @@ def _hex(color) -> str:
     )
 
 
+def _raw_fields(data: bytes) -> list[tuple[int, Any]]:
+    """Minimal protobuf wire decoder for archives without a published .proto."""
+    pos, out = 0, []
+    while pos < len(data):
+        key, pos = _DecodeVarint(data, pos)
+        number, wire = key >> 3, key & 7
+        if wire == 0:
+            value, pos = _DecodeVarint(data, pos)
+        elif wire == 1:
+            value, pos = data[pos : pos + 8], pos + 8
+        elif wire == 5:
+            value, pos = data[pos : pos + 4], pos + 4
+        elif wire == 2:
+            length, pos = _DecodeVarint(data, pos)
+            value, pos = data[pos : pos + length], pos + length
+        else:
+            raise ValueError(f"unsupported wire type {wire}")
+        out.append((number, value))
+    return out
+
+
+def _reference(data: bytes) -> int:
+    """Follow field 1 through nested messages down to the object identifier."""
+    for _ in range(4):
+        value = next((v for n, v in _raw_fields(data) if n == 1), None)
+        if isinstance(value, int):
+            return value
+        if not isinstance(value, bytes):
+            return 0
+        data = value
+    return 0
+
+
 class PagesReader:
     def __init__(self, path):
         self.pkg = Package(path)
         self._styles: dict[int, Any] = {}
-        body = self._find_body()
-        self.body = body
-        self.text = "".join(body.text)
-        sheet = self.pkg.get(body.style_sheet.identifier, TSS.StylesheetArchive)
+        self._skipped: Counter[str] = Counter()
+        self._attached: set[int] = set()  # drawables placed in the text flow
+        self._reading: set[int] = set()  # storages being read (cycle guard)
+        self.body = self._find_body()
+        sheet = self.pkg.get(self.body.style_sheet.identifier, TSS.StylesheetArchive)
         self.style_keys = (
             {e.style.identifier: e.identifier for e in sheet.identifier_to_style_map}
             if sheet
@@ -191,27 +189,15 @@ class PagesReader:
         )
         key_to_id = {v: k for k, v in self.style_keys.items()}
         self.default_para_style = key_to_id.get("paragraph-style-default")
-
-        obj = lambda e: e.object.identifier or None
-        self.t_para_style = _Table(
-            body.table_para_style.entries, obj, carry_forward=True
-        )
-        self.t_char_style = _Table(body.table_char_style.entries, obj)
-        self.t_list_style = _Table(body.table_list_style.entries, obj)
-        self.t_level = _Table(body.table_para_data.entries, lambda e: e.first)
-        self.t_starts = _Table(body.table_para_starts.entries, lambda e: e.first)
-        self.t_lang = _Table(body.table_language.entries, lambda e: e.object or None)
-        self.attachments = {
-            e.character_index: e.object.identifier
-            for e in body.table_attachment.entries
-        }
+        self.language: str | None = None
+        self.tables = TableReader(self.pkg, self.read_storage_id, None)
 
     # ---- objects ------------------------------------------------------------
 
     def _find_body(self):
         best = None
         for _, storage in self.pkg.of_type(T_STORAGE, TSWP.StorageArchive):
-            if storage.kind == 0:  # BODY
+            if storage.kind == TSWP.StorageArchive.BODY:
                 size = sum(len(t) for t in storage.text)
                 if best is None or size > best[0]:
                     best = (size, storage)
@@ -219,7 +205,7 @@ class PagesReader:
             raise ValueError("No body text found (is this a page-layout document?)")
         return best[1]
 
-    def _style(self, ident: int | None):
+    def style(self, ident: int | None):
         if not ident:
             return None
         if ident not in self._styles:
@@ -232,11 +218,11 @@ class PagesReader:
             self._styles[ident] = self.pkg.get(ident, cls) if cls else None
         return self._styles[ident]
 
-    def _chain(self, ident: int | None):
+    def chain(self, ident: int | None):
         seen = set()
         while ident and ident not in seen:
             seen.add(ident)
-            style = self._style(ident)
+            style = self.style(ident)
             if style is None:
                 return
             yield ident, style
@@ -246,9 +232,9 @@ class PagesReader:
                 else None
             )
 
-    def _char_prop(self, name: str, char_style: int | None, para_style: int | None):
+    def char_prop(self, name: str, char_style: int | None, para_style: int | None):
         for sid in (char_style, para_style or self.default_para_style):
-            for _, style in self._chain(sid):
+            for _, style in self.chain(sid):
                 props = style.char_properties
                 null = f"{name}_null"
                 if (
@@ -261,82 +247,238 @@ class PagesReader:
                     return getattr(props, name)
         return None
 
-    def _para_prop(self, name: str, para_style: int | None):
-        for _, style in self._chain(para_style or self.default_para_style):
+    def para_prop(self, name: str, para_style: int | None):
+        for _, style in self.chain(para_style or self.default_para_style):
             props = style.para_properties
             if props.HasField(name):
                 return getattr(props, name)
         return None
 
-    # ---- conversion ---------------------------------------------------------
-
-    def read(self) -> Document:
-        paragraphs = []
-        start = 0
-        text = self.text
-        for i, ch in enumerate(text):
-            if ch in PARAGRAPH_BREAKS:
-                paragraphs.append(self._paragraph(start, i))
-                start = i + 1
-        if start < len(text):
-            paragraphs.append(self._paragraph(start, len(text)))
-
-        langs = Counter()
-        for p in paragraphs:
-            for r in p.items:
-                if isinstance(r, Run) and r.lang:
-                    langs[r.lang] += len(r.text)
-        language = langs.most_common(1)[0][0] if langs else None
-        for p in paragraphs:
-            for r in p.items:
-                if isinstance(r, Run) and r.lang is None:
-                    r.lang = language
-
-        _normalize_list_levels(paragraphs)
-        _convert_typed_bullets(paragraphs)
-        _detect_headings(paragraphs)
-        return Document(paragraphs, language)
-
-    def _paragraph(self, start: int, end: int) -> Paragraph:
-        para_style = self.t_para_style.at(start)
-        p = Paragraph()
-
-        heading = self._named_heading(para_style)
-        if heading is not None:
-            p.heading = heading
-        else:
-            outline = self._para_prop("outline_level", para_style)
-            if outline is not None and outline < 9:
-                p.heading = outline + 1
-
-        align = self._para_prop("alignment", para_style)
-        p.align = ALIGNMENTS.get(align)
-        p.left_indent = self._para_prop("left_indent", para_style) or 0.0
-        p.page_break_before = bool(self._para_prop("page_break_before", para_style))
-
-        self._apply_list(p, start)
-
-        points = {start, end}
-        for t in (self.t_char_style, self.t_lang):
-            points.update(t.changes_in(start, end))
-        for pos in self.attachments:
-            if start <= pos < end:
-                points.update((pos, pos + 1))
-        bounds = sorted(points)
-        for a, b in itertools.pairwise(bounds):
-            self._emit(p, a, b, para_style)
-        return p
-
-    def _named_heading(self, para_style):
-        for ident, _ in self._chain(para_style):
+    def named_heading(self, para_style):
+        for ident, _ in self.chain(para_style):
             key = self.style_keys.get(ident, "")
             for suffix, level in NAMED_HEADINGS.items():
                 if key.endswith(suffix):
                     return level
         return None
 
+    def skip(self, what: str):
+        self._skipped[what] += 1
+
+    # ---- conversion ---------------------------------------------------------
+
+    def read(self) -> Document:
+        blocks = _StorageReader(self, self.body, body=True).read()
+        self.language = _dominant_language(blocks)
+        _fill_language(blocks, self.language)
+
+        paragraphs = [b for b in blocks if isinstance(b, Paragraph)]
+        _normalize_list_levels(paragraphs)
+        _convert_typed_bullets(blocks)
+        _detect_headings([b for b in blocks if isinstance(b, Paragraph)])
+        blocks += self._floating_objects()
+
+        for what, count in self._skipped.items():
+            log.warning("Vynecháno: %s (%d×)", what, count)
+        return Document(blocks, self.language)
+
+    def read_storage_id(self, ident: int) -> list[Block]:
+        storage = self.pkg.get(ident, TSWP.StorageArchive)
+        if (
+            storage is None or ident in self._reading
+        ):  # a malformed file could nest a storage in itself
+            return []
+        self._reading.add(ident)
+        try:
+            return _StorageReader(self, storage).read()
+        finally:
+            self._reading.discard(ident)
+
+    def drawable(self, ident: int) -> list[Image | Table | TextBox]:
+        """Convert a drawable (image, table, text box, group) into model objects."""
+        self._attached.add(ident)
+        t = self.pkg.type_of(ident)
+        if t == T_IMAGE:
+            image = self._image(self.pkg.get(ident, TSD.ImageArchive))
+            return [image] if image else []
+        if t == T_TABLE_INFO:
+            self.tables.language = self.language
+            table = self.tables.read(ident)
+            return [table] if table else []
+        if t == T_SHAPE_INFO:
+            shape = self.pkg.get(ident, TSWP.ShapeInfoArchive)
+            storage_id = (
+                shape.owned_storage.identifier or shape.deprecated_storage.identifier
+                if shape
+                else 0
+            )
+            blocks = self.read_storage_id(storage_id) if storage_id else []
+            if any(not (isinstance(b, Paragraph) and b.is_empty) for b in blocks):
+                return [TextBox(blocks)]
+            self.skip(UNSUPPORTED[T_SHAPE])
+            return []
+        if t == T_GROUP:
+            group = self.pkg.get(ident, TSD.GroupArchive)
+            children = group.children if group else []
+            return [
+                obj
+                for child in children
+                if child.identifier not in self._attached
+                for obj in self.drawable(child.identifier)
+            ]
+        self.skip(UNSUPPORTED.get(t, f"objekt typu {t}"))
+        return []
+
+    def _image(self, image) -> Image | None:
+        found = self.pkg.read_data(image.data.identifier) if image is not None else None
+        if not found:
+            self.skip("obrázek bez dat")
+            return None
+        size = image.super.geometry.size
+        return Image(found[1], found[0], size.width, size.height)
+
+    def pencil(self, ident: int) -> Pencil | None:
+        annotation = self.pkg.get(ident, TSWP.PencilAnnotationArchive)
+        storage = (
+            self.pkg.get(
+                annotation.pencil_annotation_storage.identifier,
+                TSD.PencilAnnotationStorageArchive,
+            )
+            if annotation
+            else None
+        )
+        found = (
+            self.pkg.read_data(storage.rasterized_image.identifier) if storage else None
+        )
+        if not found:
+            self.skip("kresba Apple Pencil bez obrázku")
+            return None
+        size = storage.strokes_bounding_box_size
+        image = Image(found[1], found[0], size.width, size.height)
+        return Pencil(image, storage.markup_offset.x, storage.markup_offset.y)
+
+    def _floating_objects(self) -> list[Block]:
+        """Objects placed on a page (not in the text flow), listed after the text by page."""
+        pages: dict[int, list[int]] = {}
+        for msgs in self.pkg.objects.values():
+            if not msgs or msgs[0][0] != T_FLOATING_DRAWABLES:
+                continue
+            try:
+                for number, group in _raw_fields(msgs[0][1]):
+                    if number != 1:
+                        continue
+                    fields = _raw_fields(group)
+                    page = next(
+                        (v for n, v in fields if n == 1 and isinstance(v, int)), 0
+                    )
+                    for n, value in fields:
+                        ident = _reference(value) if n == 4 else 0
+                        if ident:
+                            pages.setdefault(page, []).append(ident)
+            except ValueError, IndexError:
+                log.warning("Could not read floating objects list")
+        blocks: list[Block] = []
+        for page in sorted(pages):
+            objects = [
+                obj
+                for ident in pages[page]
+                if ident not in self._attached
+                for obj in self.drawable(ident)
+            ]
+            if not objects:
+                continue
+            blocks.append(
+                Paragraph(
+                    items=[
+                        Run(
+                            f"Objekty ze strany {page + 1}:",
+                            italic=True,
+                            lang=self.language,
+                        )
+                    ]
+                )
+            )
+            for obj in objects:
+                blocks.append(Paragraph(items=[obj]) if isinstance(obj, Image) else obj)
+        if blocks:
+            blocks[0].page_break_before = True
+        return blocks
+
+
+class _StorageReader:
+    """Reads one TSWP text storage (body, cell, text box or footnote) into blocks."""
+
+    def __init__(self, owner: PagesReader, storage, body: bool = False):
+        self.owner = owner
+        self.storage = storage
+        self.body = body
+        self.text = "".join(storage.text)
+        obj = lambda e: e.object.identifier or None
+        self.t_para_style = _Table(
+            storage.table_para_style.entries, obj, carry_forward=True
+        )
+        self.t_char_style = _Table(storage.table_char_style.entries, obj)
+        self.t_list_style = _Table(storage.table_list_style.entries, obj)
+        self.t_level = _Table(storage.table_para_data.entries, lambda e: e.first)
+        self.t_starts = _Table(storage.table_para_starts.entries, lambda e: e.first)
+        self.t_lang = _Table(storage.table_language.entries, lambda e: e.object or None)
+        self.attachments = {
+            e.character_index: e.object.identifier
+            for e in storage.table_attachment.entries
+        }
+        self.footnotes = {
+            e.character_index: e.object.identifier
+            for e in storage.table_footnote.entries
+            if e.object.identifier
+        }
+        self.pencils = {
+            e.range.location: e.field.identifier
+            for e in storage.table_pencil_annotation.entries
+        }
+
+    def read(self) -> list[Block]:
+        blocks: list[Block] = []
+        start = 0
+        for i, ch in enumerate(self.text):
+            if ch in PARAGRAPH_BREAKS:
+                blocks += self._paragraph(start, i)
+                start = i + 1
+        if start < len(self.text):
+            blocks += self._paragraph(start, len(self.text))
+        return blocks
+
+    def _paragraph(self, start: int, end: int) -> list[Block]:
+        owner = self.owner
+        para_style = self.t_para_style.at(start)
+        p = Paragraph()
+
+        heading = owner.named_heading(para_style)
+        if heading is not None:
+            p.heading = heading
+        else:
+            outline = owner.para_prop("outline_level", para_style)
+            if outline is not None and outline < 9:
+                p.heading = outline + 1
+
+        p.align = ALIGNMENTS.get(owner.para_prop("alignment", para_style))
+        p.left_indent = owner.para_prop("left_indent", para_style) or 0.0
+        p.page_break_before = (
+            bool(owner.para_prop("page_break_before", para_style)) and self.body
+        )
+        self._apply_list(p, start)
+
+        points = {start, end}
+        for t in (self.t_char_style, self.t_lang):
+            points.update(t.changes_in(start, end))
+        for pos in itertools.chain(self.attachments, self.footnotes, self.pencils):
+            if start <= pos < end:
+                points.update((pos, pos + 1))
+        for a, b in itertools.pairwise(sorted(points)):
+            self._emit(p, a, b, para_style)
+        return _split_out_blocks(p)
+
     def _apply_list(self, p: Paragraph, start: int):
-        ls = self._style(self.t_list_style.at(start))
+        ls = self.owner.style(self.t_list_style.at(start))
         level = self.t_level.at(start) or 0
         p.level = level
         p.restart = bool(self.t_starts.at(start))
@@ -363,28 +505,47 @@ class PagesReader:
             p.list_kind = "bullet"
 
     def _emit(self, p: Paragraph, a: int, b: int, para_style):
+        owner = self.owner
         chunk = self.text[a:b]
+        if a in self.pencils:
+            pencil = owner.pencil(self.pencils[a])
+            if pencil:
+                p.items.append(pencil)
         if a in self.attachments:
-            img = self._image(self.attachments[a])
-            if img:
-                p.items.append(img)
-            chunk = chunk[1:] if chunk.startswith(OBJECT_REPLACEMENT) else chunk
-            if not chunk:
-                return
+            att = owner.pkg.get(self.attachments[a], TSWP.DrawableAttachmentArchive)
+            if att is not None:
+                p.items += owner.drawable(att.drawable.identifier)
+            else:
+                owner.skip(
+                    f"vložený objekt typu {owner.pkg.type_of(self.attachments[a])}"
+                )
+            chunk = chunk.removeprefix(OBJECT_REPLACEMENT)
+        if a in self.footnotes:
+            note = owner.pkg.get(
+                self.footnotes[a], TSWP.FootnoteReferenceAttachmentArchive
+            )
+            if note is not None and note.contained_storage.identifier:
+                p.items.append(
+                    Footnote(owner.read_storage_id(note.contained_storage.identifier))
+                )
+            chunk = chunk.removeprefix(OBJECT_REPLACEMENT)
+        if not chunk:
+            return
 
         cs = self.t_char_style.at(a)
-        prop = lambda n: self._char_prop(n, cs, para_style)
+        prop = lambda n: owner.char_prop(n, cs, para_style)
         C = TSWP.CharacterStylePropertiesArchive
         color = prop("font_color")
         background = prop("background_color")
-        superscript = prop("superscript")
         run_proto = Run(
             text="",
             bold=bool(prop("bold")),
             italic=bool(prop("italic")),
             underline=(prop("underline") or 0) != C.kNoUnderline,
             strike=(prop("strikethru") or 0) != C.kNoStrikethru,
-            script={C.kSuperscript: "super", C.kSubscript: "sub"}.get(superscript),
+            script={C.kSuperscript: "super", C.kSubscript: "sub"}.get(
+                prop("superscript")
+            ),
             caps=prop("capitalization") == C.kAllCaps,
             color=_hex(color)
             if color is not None and getattr(color, "a", 1) > 0
@@ -406,8 +567,9 @@ class PagesReader:
                 if buf:
                     _append_run(p, run_proto, "".join(buf))
                     buf = []
-                p.items.append(PageBreak())
-            elif ch == " ":
+                if self.body:
+                    p.items.append(PageBreak())
+            elif ch == LINE_BREAK:
                 buf.append("\n")
             elif ch == OBJECT_REPLACEMENT or (ord(ch) < 32 and ch != "\t"):
                 continue
@@ -416,24 +578,69 @@ class PagesReader:
         if buf:
             _append_run(p, run_proto, "".join(buf))
 
-    def _image(self, attachment_id: int) -> Image | None:
-        att = self.pkg.get(attachment_id, TSWP.DrawableAttachmentArchive)
-        if att is None:
-            return None
-        drawable_id = att.drawable.identifier
-        if self.pkg.type_of(drawable_id) != T_IMAGE:
-            log.warning(
-                "Skipping unsupported embedded object (type %s)",
-                self.pkg.type_of(drawable_id),
-            )
-            return None
-        image = self.pkg.get(drawable_id, TSD.ImageArchive)
-        found = self.pkg.read_data(image.data.identifier)
-        if not found:
-            log.warning("Image data %s missing from package", image.data.identifier)
-            return None
-        size = image.super.geometry.size
-        return Image(found[1], found[0], size.width, size.height)
+
+def _split_out_blocks(p: Paragraph) -> list[Block]:
+    """A table or text box anchored inside a paragraph becomes its own block."""
+    if not any(isinstance(i, Table | TextBox) for i in p.items):
+        return [p]
+    out: list[Block] = []
+    current = _copy_props(p)
+    for item in p.items:
+        if isinstance(item, Table | TextBox):
+            if not current.is_empty:
+                out.append(current)
+            out.append(item)
+            current = _copy_props(p)
+            current.list_kind = None
+        else:
+            current.items.append(item)
+    if not current.is_empty:
+        out.append(current)
+    return out
+
+
+def _copy_props(p: Paragraph) -> Paragraph:
+    return Paragraph(
+        list_kind=p.list_kind,
+        level=p.level,
+        number_format=p.number_format,
+        number_suffix=p.number_suffix,
+        restart=p.restart,
+        heading=p.heading,
+        align=p.align,
+        left_indent=p.left_indent,
+        page_break_before=p.page_break_before,
+    )
+
+
+def _walk_runs(blocks: list[Block]):
+    for b in blocks:
+        if isinstance(b, Paragraph):
+            for item in b.items:
+                if isinstance(item, Run):
+                    yield item
+                elif isinstance(item, Footnote):
+                    yield from _walk_runs(item.blocks)
+        elif isinstance(b, TextBox):
+            yield from _walk_runs(b.blocks)
+        elif isinstance(b, Table):
+            for row in b.rows:
+                for cell in row:
+                    yield from _walk_runs(cell.blocks)
+
+
+def _dominant_language(blocks: list[Block]) -> str | None:
+    langs: Counter[str] = Counter()
+    for r in _walk_runs(blocks):
+        if r.lang:
+            langs[r.lang] += len(r.text)
+    return langs.most_common(1)[0][0] if langs else None
+
+
+def _fill_language(blocks: list[Block], language: str | None):
+    for r in _walk_runs(blocks):
+        if r.lang is None:
+            r.lang = language
 
 
 def _append_run(p: Paragraph, proto: Run, text: str):
@@ -506,12 +713,16 @@ _ALWAYS_BULLET = {
 _CONTEXT_BULLET = {"o": 1, "§": 2}
 
 
-def _convert_typed_bullets(paragraphs: list[Paragraph]):
-    out: list[Paragraph] = []
+def _convert_typed_bullets(blocks: list[Block]):
+    out: list[Block] = []
     in_run = False  # previous paragraph was a bullet
-    for p in paragraphs:
+    for p in blocks:
+        if not isinstance(p, Paragraph):
+            in_run = False
+            out.append(p)
+            continue
         text = p.text
-        prev = out[-1] if out else None
+        prev = out[-1] if out and isinstance(out[-1], Paragraph) else None
         if p.list_kind or p.heading is not None:
             in_run = p.list_kind == "bullet"
             out.append(p)
@@ -555,7 +766,7 @@ def _convert_typed_bullets(paragraphs: list[Paragraph]):
         else:
             in_run = False
         out.append(p)
-    paragraphs[:] = out
+    blocks[:] = out
 
 
 def _merge_into(target: Paragraph, p: Paragraph):

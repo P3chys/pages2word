@@ -10,3 +10,6 @@ out/
 build/
 dist/
 release/
+
+# test fixtures are public sample files
+!tests/fixtures/*.pages
