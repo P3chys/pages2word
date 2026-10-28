@@ -11,14 +11,36 @@ from .writer import write_docx
 
 log = logging.getLogger("pages2word")
 
-SUFFIXES = (".pages", *WORD_SUFFIXES)
+SUFFIXES = (".pages", ".pdf", *WORD_SUFFIXES)
+
+
+def pdf_layout_path(dst: Path) -> Path:
+    """Where the look-alike copy of a PDF goes, next to the restyled `dst`."""
+    return dst.with_name(f"{dst.stem} (PDF).docx")
+
+
+def outputs(src: Path, dst: Path) -> list[Path]:
+    """Every file converting `src` to `dst` writes."""
+    if src.suffix.lower() == ".pdf":
+        return [pdf_layout_path(dst), dst]
+    return [dst]
 
 
 def convert(
     src: Path, dst: Path, template: Path | None = None, blank_lines: int = 4
 ) -> Path:
-    """Convert a .pages file, or restyle a Word document, into `dst`."""
-    if src.suffix.lower() in WORD_SUFFIXES:
+    """Convert a .pages file, restyle a Word document, or rebuild a PDF, into `dst`.
+
+    A PDF also gets a copy that keeps its own look (see `pdf_layout_path`)."""
+    suffix = src.suffix.lower()
+    if suffix == ".pdf":
+        from .pdf_reader import PdfReader, strip_layout
+
+        doc = PdfReader(src).read()
+        write_docx(doc, pdf_layout_path(dst), None, 0, keep_layout=True)
+        write_docx(strip_layout(doc), dst, template, 0)
+        return dst
+    if suffix in WORD_SUFFIXES:
         doc = DocxReader(src).read()
     else:
         doc = PagesReader(src).read()
@@ -65,13 +87,15 @@ def main(argv: list[str] | None = None) -> int:
         prog="pages2word",
         description="Convert Apple Pages (.pages) files to Word (.docx) using Word's own styles "
         "and lists, or restyle Word documents (.docx/.doc) with a style document. "
+        "A PDF gives two documents: '<name> (PDF).docx' looks like the PDF, "
+        "'<name>.docx' uses the styles. "
         "'pages2word extract-styles DOC' saves a document's styles for -t.",
     )
     parser.add_argument(
         "inputs",
         nargs="+",
         type=Path,
-        help=".pages/.docx/.doc files or folders containing them",
+        help=".pages/.docx/.doc/.pdf files or folders containing them",
     )
     parser.add_argument(
         "-o", "--out-dir", type=Path, help="output folder (default: next to each input)"
@@ -112,16 +136,17 @@ def main(argv: list[str] | None = None) -> int:
     for src in files:
         dst = (args.out_dir or src.parent) / (src.stem + ".docx")
         # never overwrite a Word document with its own restyled copy
-        if (dst.exists() and not args.force) or dst.resolve() == src.resolve():
+        exists = any(out.exists() for out in outputs(src, dst))
+        if (exists and not args.force) or dst.resolve() == src.resolve():
             dst = dst.with_stem(dst.stem + " (converted)")
-            if dst.exists() and not args.force:
+            if any(out.exists() for out in outputs(src, dst)) and not args.force:
                 log.error("%s exists, use --force to overwrite", dst)
                 failed += 1
                 continue
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
             convert(src, dst, args.template, args.blank_lines)
-            print(f"{src} -> {dst}")
+            print(f"{src} -> {', '.join(str(out) for out in outputs(src, dst))}")
         except Exception as exc:  # noqa: BLE001 - keep converting the other files
             log.error("%s: %s", src, exc)
             failed += 1

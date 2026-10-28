@@ -15,6 +15,7 @@ RUN_FORMAT_FIELDS = (
     "highlight",
     "lang",
     "size",
+    "font",
 )
 
 
@@ -31,6 +32,7 @@ class Run:
     highlight: str | None = None  # RRGGBB
     lang: str | None = None
     size: float | None = None
+    font: str | None = None  # only kept when copying a PDF's look
 
     def same_format(self, other: Run) -> bool:
         return all(getattr(self, f) == getattr(other, f) for f in RUN_FORMAT_FIELDS)
@@ -75,6 +77,10 @@ class Paragraph:
     align: str | None = None
     left_indent: float = 0.0
     page_break_before: bool = False
+    # Layout of a PDF, written only for its look-alike copy (points).
+    first_line_indent: float = 0.0  # negative = hanging
+    space_before: float | None = None
+    line_spacing: float | None = None  # exact line pitch
 
     @property
     def text(self) -> str:
@@ -99,6 +105,7 @@ class Cell:
 class Table:
     rows: list[list[Cell]]
     header_rows: int = 0
+    col_widths: list[float] | None = None  # points, from a PDF
 
 
 @dataclass
@@ -111,9 +118,22 @@ Block = Paragraph | Table | TextBox
 
 
 @dataclass
+class PageSetup:
+    """Page size and margins in points."""
+
+    width: float
+    height: float
+    left: float
+    right: float
+    top: float
+    bottom: float
+
+
+@dataclass
 class Document:
     blocks: list[Block]
     language: str | None
+    page: PageSetup | None = None
 
     @property
     def paragraphs(self) -> list[Paragraph]:

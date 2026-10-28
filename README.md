@@ -50,13 +50,39 @@ uv run pages2word messy.docx -t "my styles.docx"                    # -> messy (
 - Old `.doc` files are converted through Word, so this needs Word to be installed.
 - The input is never overwritten. If the output would replace it, the copy gets ` (converted)` in its name.
 
+## PDF to Word
+
+```bash
+uv run pages2word notes.pdf -t "my styles.docx"
+```
+
+A PDF gives two documents:
+
+- **`notes (PDF).docx`** looks like the PDF: the same fonts, sizes, colours, alignment, indents, line spacing, page size and margins. It is still built from real Word structure: headings, real lists and real tables.
+- **`notes.docx`** has the same content in your styles (`-t`, or Word's defaults), the same way as when restyling a Word document.
+
+A PDF only stores positioned characters, so the structure is rebuilt from the layout:
+- Lines continuing at the same indent are joined into paragraphs.
+- A bullet glyph or number followed by a gap starts a list item, and its indent gives the level.
+- Bigger text becomes a heading, with one heading level per font size.
+- Page numbers and repeating headers or footers are removed.
+- Tables with text in several columns become Word tables with the PDF's column widths. Pictures are copied as images.
+
+Limitations:
+- Scanned PDFs (images without text) are not supported.
+- Footnotes stay as ordinary text at the end of their page.
+- A table that breaks across pages can become two tables.
+- Page breaks are not copied, so the copy's pages may drift a little from the PDF's.
+
+The PDF reading uses [pdfplumber](https://github.com/jsvine/pdfplumber) (MIT).
+
 ## Windows app (Pages2Word.exe)
 
 `just build` creates `dist/Pages2Word.exe` and `release/Pages2Word.zip`. The zip holds the exe, the Word macro and a Czech guide (`NAVOD.txt`).
 
-- **Drag and drop:** drop `.pages` files on the exe and a `.docx` appears next to each one. A Word document (`.docx`/`.doc`) dropped on it gets a restyled copy instead. Existing files are never overwritten.
+- **Drag and drop:** drop `.pages` files on the exe and a `.docx` appears next to each one. A Word document (`.docx`/`.doc`) dropped on it gets a restyled copy instead. A PDF gives the two documents described above. Existing files are never overwritten.
 - **The window** (double-click the exe) has these buttons:
-  - Convert files (`.pages`, `.docx`, `.doc`)
+  - Convert files (`.pages`, `.docx`, `.doc`, `.pdf`)
   - Take styles from a document: extracts the styles of a Word document you pick (see above) into the custom styles file
   - Edit styles
   - Reset styles
