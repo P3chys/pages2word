@@ -28,13 +28,36 @@ What else is converted:
 
 Still skipped, with a warning: shapes without text, charts, video and equations. Headers and footers are also not converted.
 
+## Restyling Word documents
+
+Messy Word documents can be given the look of a document you styled yourself:
+
+```bash
+uv run pages2word extract-styles myNotes.docx -o "my styles.docx"   # once
+uv run pages2word messy.docx -t "my styles.docx"                    # -> messy (converted).docx
+```
+
+- **Extracting styles** finds the styles your document actually uses for headings, list items and text, even custom ones such as "Nadpis 1_M". It also keeps your bullet list definition, page size and margins.
+  - A font or size you set by hand on almost all text (e.g. every list item set to Calibri 12) is moved into the style.
+  - Custom heading styles get an outline level, so the Navigation pane and table of contents pick them up.
+  - The roles are stored as Word document variables, so you can edit the style document in Word afterwards. Any styled `.docx` also works directly as `-t`.
+- **Restyling** keeps the text and its meaning: headings, lists and their levels, bold, italic, colours, tables, images and footnotes. Everything else is replaced by your styles:
+  - Paragraph styles pasted in from elsewhere ("Výchozí", "Default", …) are replaced.
+  - Fonts and sizes set by hand are removed, and so are justification and indents.
+  - The many list definitions such documents collect become your single bullet list.
+  - Bullets typed by hand ("• …") and lettered lists typed by hand ("a) …", "b) …") become real Word lists.
+  - Numbered titles typed as plain text between numbered headings ("23. …" between "22. …" and "24. …") become headings.
+- Old `.doc` files are converted through Word, so this needs Word to be installed.
+- The input is never overwritten. If the output would replace it, the copy gets ` (converted)` in its name.
+
 ## Windows app (Pages2Word.exe)
 
 `just build` creates `dist/Pages2Word.exe` and `release/Pages2Word.zip`. The zip holds the exe, the Word macro and a Czech guide (`NAVOD.txt`).
 
-- **Drag and drop:** drop `.pages` files on the exe and a `.docx` appears next to each one. Existing files are never overwritten.
+- **Drag and drop:** drop `.pages` files on the exe and a `.docx` appears next to each one. A Word document (`.docx`/`.doc`) dropped on it gets a restyled copy instead. Existing files are never overwritten.
 - **The window** (double-click the exe) has these buttons:
-  - Convert files
+  - Convert files (`.pages`, `.docx`, `.doc`)
+  - Take styles from a document: extracts the styles of a Word document you pick (see above) into the custom styles file
   - Edit styles
   - Reset styles
   - Link with Word: per-user file association, so double-clicking a `.pages` file opens it in Word. Right-click → convert also works.

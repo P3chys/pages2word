@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import io
 import logging
 from pathlib import Path
@@ -16,6 +17,7 @@ from docx.oxml.ns import nsdecls, qn
 from docx.shared import Pt, RGBColor
 from docx.table import _Cell
 from docx.text.paragraph import Paragraph as DocxParagraph
+from lxml import etree
 
 from .model import (
     Block,
@@ -29,6 +31,7 @@ from .model import (
     Table,
     TextBox,
 )
+from .wordstyles import Profile, load_profile, save_profile
 
 log = logging.getLogger(__name__)
 
@@ -133,14 +136,27 @@ def _number_abstract(abstract_id: int, formats: dict[int, tuple[str, str]]) -> s
     )
 
 
+def _copy_abstract(abstract_id: int, element) -> str:
+    el = copy.deepcopy(element)
+    el.set(qn("w:abstractNumId"), str(abstract_id))
+    for tag in ("w:nsid", "w:tmpl", "w:numStyleLink", "w:styleLink"):
+        for child in el.findall(qn(tag)):
+            el.remove(child)
+    return etree.tostring(el, encoding="unicode")
+
+
 class _Numbering:
-    def __init__(self, document):
+    def __init__(self, document, bullets=None):
         self.root = document.part.numbering_part.element
         for child in list(self.root):
             self.root.remove(child)
         self._abstract_count = 0
         self._num_count = 0
-        self.bullet_num = self._num(self._abstract(_bullet_abstract))
+        if bullets is not None:  # the template's own bullet list definition
+            self.bullet_abstract = self._abstract(_copy_abstract, bullets)
+        else:
+            self.bullet_abstract = self._abstract(_bullet_abstract)
+        self.bullet_num = self._num(self.bullet_abstract)
 
     def _abstract(self, factory, *args) -> int:
         aid = self._abstract_count
@@ -185,9 +201,10 @@ def _patch_theme_fonts(document):
             part._blob = xml.encode("utf-8")
 
 
-def _new_document(language: str, template: Path | None):
+def _new_document(language: str, template: Path | None) -> tuple[object, Profile]:
     if template:
         document = docx.Document(str(template))
+        profile = load_profile(document)
         body = document.element.body
         for child in list(body):
             if child.tag != qn("w:sectPr"):
@@ -197,7 +214,7 @@ def _new_document(language: str, template: Path | None):
         for style_id, xml in EXTRA_STYLES.items():
             if style_id not in present:
                 root.append(parse_xml(xml))
-        return document
+        return document, profile
 
     document = docx.Document()
     headings = "".join(_heading_style(n) for n in range(1, 7))
@@ -224,7 +241,7 @@ def _new_document(language: str, template: Path | None):
     section.page_width, section.page_height = docx.shared.Mm(210), docx.shared.Mm(297)
     for side in ("left_margin", "right_margin", "top_margin", "bottom_margin"):
         setattr(section, side, docx.shared.Cm(2.5))
-    return document
+    return document, Profile()
 
 
 def _set_lang(run, lang: str):
@@ -278,6 +295,10 @@ class _Footnotes:
 
     def add(self):
         if self.root is None:
+            # a template's own footnotes part would clash with ours; its notes are gone anyway
+            for r_id, rel in list(self.document.part.rels.items()):
+                if rel.reltype == RT.FOOTNOTES:
+                    self.document.part.drop_rel(r_id)
             self.root = parse_xml(FOOTNOTE_SEPARATORS)
             part = XmlPart(
                 PackURI("/word/footnotes.xml"),
@@ -324,8 +345,10 @@ class WordWriter:
     ):
         self.doc = doc
         self.language = doc.language or "cs-CZ"
-        self.document = _new_document(self.language, template)
-        self.numbering = _Numbering(self.document)
+        self.document, self.profile = _new_document(self.language, template)
+        self.numbering = _Numbering(self.document, self.profile.bullets)
+        if template:  # outputs carry the roles too, so they work as style documents
+            save_profile(self.document, self.profile, self.numbering.bullet_abstract)
         self.footnotes = _Footnotes(self.document)
         self.empty_limit = empty_lines_to_page_break
         # With a user template its heading styles decide colours, not Pages.
@@ -444,19 +467,26 @@ class WordWriter:
 
         para = self._new_paragraph(container)
         if p.heading is not None:
-            self._style(
-                para, "Title" if p.heading == 0 else f"Heading {min(p.heading, 6)}"
-            )
+            level = min(p.heading, 6)
+            if level == 0:
+                self._style(para, self.profile.style("title", "Title"))
+            else:
+                self._style(
+                    para, self.profile.style(f"heading{level}", f"Heading {level}")
+                )
         elif p.list_kind:
-            self._style(para, "List Paragraph")
+            self._style(para, self.profile.style("list", "List Paragraph"))
             num_id = (
                 self.numbering.bullet_num
                 if p.list_kind == "bullet"
                 else self._number_list
             )
             _set_numbering(para, num_id, p.level)
-        elif p.left_indent > 0:
-            para.paragraph_format.left_indent = Pt(p.left_indent)
+        else:
+            if self.profile.roles.get("body"):
+                self._style(para, self.profile.roles["body"])
+            if p.left_indent > 0:
+                para.paragraph_format.left_indent = Pt(p.left_indent)
 
         if p.align in ALIGN:
             para.alignment = ALIGN[p.align]

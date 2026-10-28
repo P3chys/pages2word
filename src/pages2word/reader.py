@@ -713,7 +713,8 @@ _ALWAYS_BULLET = {
 _CONTEXT_BULLET = {"o": 1, "§": 2}
 
 
-def _convert_typed_bullets(blocks: list[Block]):
+def _convert_typed_bullets(blocks: list[Block], merge_continuations: bool = True):
+    """merge_continuations: join hard-wrapped lines (pasted text) to the bullet above."""
     out: list[Block] = []
     in_run = False  # previous paragraph was a bullet
     for p in blocks:
@@ -755,7 +756,8 @@ def _convert_typed_bullets(blocks: list[Block]):
             p.list_kind, p.level = "bullet", level
             in_run = True
         elif (
-            in_run
+            merge_continuations
+            and in_run
             and prev is not None
             and text[:1]
             and (text[:1].islower() or text[:1] in "(…,;)")

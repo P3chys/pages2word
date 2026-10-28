@@ -1,6 +1,7 @@
 """Windows front end (Pages2Word.exe).
 
 - Drop .pages files on the exe: each is converted to a .docx next to it.
+  Word documents (.docx/.doc) dropped on it get a restyled copy instead.
 - Double-click the exe: a small window with buttons.
 - `--open FILE`: convert and open in Word (used by the file association).
 - `--output OUT --quiet FILE`: convert to an exact path (used by the Word macro).
@@ -14,7 +15,7 @@ import os
 import sys
 from pathlib import Path
 
-from .cli import convert
+from .cli import SUFFIXES, convert
 
 APP_NAME = "Pages2Word"
 PROG_ID = "Pages2Word.Document"
@@ -85,8 +86,8 @@ def convert_files(
 ) -> int:
     done, failed, notes = [], [], []
     for src in files:
-        if src.suffix.lower() != ".pages":
-            failed.append(f"{src.name}: není soubor .pages")
+        if src.suffix.lower() not in SUFFIXES:
+            failed.append(f"{src.name}: není soubor .pages ani dokument Wordu")
             continue
         try:
             dst, warnings = convert_one(src)
@@ -239,6 +240,12 @@ def reset_styles():
     STYLES_FILE.unlink(missing_ok=True)
 
 
+def styles_from_document(src: Path):
+    from .styles import extract_styles
+
+    extract_styles(src, STYLES_FILE)
+
+
 # ---- main window ----------------------------------------------------------------
 
 
@@ -257,13 +264,19 @@ def window():
     ).grid(sticky="w")
     ttk.Label(
         frame,
-        text="Tip: soubory .pages stačí přetáhnout myší na ikonu Pages2Word.exe.",
+        text="Tip: soubory .pages i .docx stačí přetáhnout myší na ikonu Pages2Word.exe.\n"
+        "Dokumenty Wordu dostanou vaše styly (uloží se jako kopie).",
         foreground="#555",
     ).grid(sticky="w", pady=(2, 14))
 
     def pick():
         names = filedialog.askopenfilenames(
-            title="Vyberte soubory Pages", filetypes=[("Dokumenty Pages", "*.pages")]
+            title="Vyberte soubory Pages nebo Wordu",
+            filetypes=[
+                ("Pages a Word", "*.pages *.docx *.doc"),
+                ("Dokumenty Pages", "*.pages"),
+                ("Dokumenty Wordu", "*.docx *.doc"),
+            ],
         )
         if names:
             convert_files([Path(n) for n in names])
@@ -275,6 +288,30 @@ def window():
             "Ve Wordu se otevřel vzor stylů.\n\n"
             "Změňte styly (Domů → Styly → pravým tlačítkem → Upravit), "
             "dokument uložte a zavřete. Další převody už použijí vaše styly.",
+        )
+
+    def take_styles():
+        name = filedialog.askopenfilename(
+            title="Vyberte dokument s vašimi styly",
+            filetypes=[("Dokumenty Wordu", "*.docx *.doc")],
+        )
+        if not name:
+            return
+        if style_template() and not messagebox.askyesno(
+            APP_NAME, "Nahradit současné vlastní styly styly z tohoto dokumentu?"
+        ):
+            return
+        try:
+            styles_from_document(Path(name))
+        except Exception as exc:  # noqa: BLE001 - report to the user
+            messagebox.showerror(APP_NAME, f"{Path(name).name}: {exc}")
+            return
+        refresh()
+        messagebox.showinfo(
+            APP_NAME,
+            "Styly převzaty. Nadpisy, odrážky a písmo z tohoto dokumentu "
+            "se teď použijí pro všechny převody.\n\n"
+            "Pro kontrolu je můžete zobrazit tlačítkem Upravit styly.",
         )
 
     def reset():
@@ -302,6 +339,9 @@ def window():
     buttons = ttk.Frame(frame)
     buttons.grid(sticky="ew")
     ttk.Button(buttons, text="Převést soubory…", command=pick, width=34).grid(
+        sticky="ew", pady=3
+    )
+    ttk.Button(buttons, text="Převzít styly z dokumentu…", command=take_styles).grid(
         sticky="ew", pady=3
     )
     ttk.Button(buttons, text="Upravit styly…", command=styles).grid(sticky="ew", pady=3)

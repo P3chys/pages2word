@@ -1,13 +1,15 @@
 """The editable style template: a sample .docx showing every style the converter uses.
 
 The user restyles it in Word (Home > Styles > right-click > Modify) and saves it;
-conversions then take their styles, page size and margins from it.
+conversions then take their styles, page size and margins from it. It can also be
+extracted from a document the user already styled the way they like.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from .docx_reader import open_word_file
 from .model import Cell, Document, Footnote, Paragraph, Run, Table
 from .writer import write_docx
 
@@ -60,3 +62,12 @@ def make_style_template(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     write_docx(Document(SAMPLE, "cs-CZ"), path, empty_lines_to_page_break=0)
     return path
+
+
+def extract_styles(src: Path, dst: Path) -> Path:
+    """Style document from `src`: its styles, list bullets, page setup, and which
+    styles it uses for headings, lists and text; the content is replaced by a sample."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with open_word_file(src) as path:
+        write_docx(Document(SAMPLE, "cs-CZ"), dst, path, empty_lines_to_page_break=0)
+    return dst
