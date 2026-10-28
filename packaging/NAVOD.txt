@@ -36,6 +36,17 @@
    Všechny další převody použijí vaše styly.
    Návrat k původnímu vzhledu: "Obnovit výchozí styly".
 
+5) SJEDNOCENÍ VZHLEDU DOKUMENTŮ WORDU
+   Máte-li dokument, který vypadá tak, jak chcete (vlastní nadpisy,
+   odrážky, písmo), klikněte v Pages2Word.exe na "Převzít styly
+   z dokumentu…" a vyberte ho. Jeho styly se použijí pro všechny převody.
+   Pak přetáhněte neupravený dokument Wordu (.docx nebo .doc) na ikonu
+   Pages2Word.exe (nebo použijte "Převést soubory…"). Vznikne jeho kopie,
+   např. "Poznámky (2).docx", s nadpisy, odrážkami a písmem podle vzoru:
+   ručně psané odrážky (•, a), b)…) se změní na skutečné seznamy, ručně
+   nastavené písmo a zarovnání do bloku zmizí. Původní soubor se nemění.
+   Starý formát .doc vyžaduje nainstalovaný Word.
+
 CO SE PŘEVÁDÍ: text, nadpisy, seznamy, obrázky, tabulky, textová pole,
 poznámky pod čarou a kresby Apple Pencil (jako obrázek vedle textu).
 Objekty, které jsou v Pages připnuté ke stránce (ne k textu), se přidají
