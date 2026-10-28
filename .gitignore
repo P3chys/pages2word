@@ -8,6 +8,7 @@ out/
 *.pages
 *.docx
 *.doc
+*.pdf
 build/
 dist/
 release/

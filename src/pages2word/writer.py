@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 
 import docx
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_LINE_SPACING
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.packuri import PackURI
 from docx.opc.part import XmlPart
@@ -31,7 +31,7 @@ from .model import (
     Table,
     TextBox,
 )
-from .wordstyles import Profile, load_profile, save_profile
+from .wordstyles import Profile, _child, load_profile, save_profile
 
 log = logging.getLogger(__name__)
 
@@ -342,8 +342,11 @@ class WordWriter:
         doc: Document,
         template: Path | None = None,
         empty_lines_to_page_break: int = 4,
+        keep_layout: bool = False,
     ):
         self.doc = doc
+        # Copy the source's fonts, sizes, indents and spacing (a PDF's look-alike).
+        self.keep_layout = keep_layout
         self.language = doc.language or "cs-CZ"
         self.document, self.profile = _new_document(self.language, template)
         self.numbering = _Numbering(self.document, self.profile.bullets)
@@ -354,6 +357,11 @@ class WordWriter:
         # With a user template its heading styles decide colours, not Pages.
         self.heading_colors = template is None
         section = self.document.sections[0]
+        if keep_layout and doc.page:
+            page = doc.page
+            section.page_width, section.page_height = Pt(page.width), Pt(page.height)
+            section.left_margin, section.right_margin = Pt(page.left), Pt(page.right)
+            section.top_margin, section.bottom_margin = Pt(page.top), Pt(page.bottom)
         self.max_image_width = (
             section.page_width - section.left_margin - section.right_margin
         ) / EMU_PER_PT
@@ -426,6 +434,11 @@ class WordWriter:
         if not t.rows or not t.rows[0]:
             return
         table = self._add_table(container, len(t.rows), len(t.rows[0]))
+        if self.keep_layout and t.col_widths and len(t.col_widths) == len(t.rows[0]):
+            table.autofit = False
+            for column, width in zip(table.columns, t.col_widths):
+                for cell in column.cells:
+                    cell.width = Pt(width)
         for r, row in enumerate(t.rows):
             for c, cell in enumerate(row):
                 if cell.row_span > 1 or cell.col_span > 1:
@@ -492,7 +505,24 @@ class WordWriter:
             para.alignment = ALIGN[p.align]
         if p.page_break_before:
             para.paragraph_format.page_break_before = True
+        if self.keep_layout:
+            self._layout(para, p)
         self._items(para, p.items, heading=p.heading is not None)
+
+    def _layout(self, para, p: Paragraph):
+        fmt = para.paragraph_format
+        if p.list_kind or p.left_indent or p.first_line_indent:
+            fmt.left_indent = Pt(p.left_indent)
+            fmt.first_line_indent = Pt(p.first_line_indent)
+        fmt.space_before = Pt(p.space_before or 0)
+        fmt.space_after = Pt(0)
+        if p.line_spacing and not any(isinstance(i, Image) for i in p.items):
+            fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+            fmt.line_spacing = Pt(p.line_spacing)
+        # List Paragraph drops the space between list items; the PDF's gaps must stay
+        _child(para._p.get_or_add_pPr(), "contextualSpacing", create=True).set(
+            qn("w:val"), "0"
+        )
 
     def _items(self, para, items, heading: bool = False, allow_images: bool = True):
         for item in items:
@@ -515,6 +545,16 @@ class WordWriter:
 
     def _run(self, para, r: Run, heading: bool):
         run = para.add_run(r.text)
+        if self.keep_layout:
+            # the heading style's own look must not show through
+            if r.font:
+                run.font.name = r.font
+                run._r.get_or_add_rPr().get_or_add_rFonts().set(qn("w:cs"), r.font)
+            if r.size:
+                run.font.size = Pt(r.size)
+            if heading:
+                run.bold, run.italic = r.bold, r.italic
+                run.font.color.rgb = RGBColor.from_string(r.color or "000000")
         if r.bold and not heading:
             run.bold = True
         if r.italic:
@@ -594,5 +634,6 @@ def write_docx(
     out: Path,
     template: Path | None = None,
     empty_lines_to_page_break: int = 4,
+    keep_layout: bool = False,
 ):
-    WordWriter(doc, template, empty_lines_to_page_break).write(out)
+    WordWriter(doc, template, empty_lines_to_page_break, keep_layout).write(out)

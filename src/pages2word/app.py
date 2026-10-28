@@ -1,7 +1,8 @@
 """Windows front end (Pages2Word.exe).
 
 - Drop .pages files on the exe: each is converted to a .docx next to it.
-  Word documents (.docx/.doc) dropped on it get a restyled copy instead.
+  Word documents (.docx/.doc) dropped on it get a restyled copy instead, and a
+  PDF gives two: one that looks like the PDF and one in the user's styles.
 - Double-click the exe: a small window with buttons.
 - `--open FILE`: convert and open in Word (used by the file association).
 - `--output OUT --quiet FILE`: convert to an exact path (used by the Word macro).
@@ -15,7 +16,7 @@ import os
 import sys
 from pathlib import Path
 
-from .cli import SUFFIXES, convert
+from .cli import SUFFIXES, convert, outputs
 
 APP_NAME = "Pages2Word"
 PROG_ID = "Pages2Word.Document"
@@ -39,7 +40,7 @@ def style_template() -> Path | None:
 def unique_output(src: Path) -> Path:
     dst = src.with_suffix(".docx")
     n = 2
-    while dst.exists():
+    while any(out.exists() for out in outputs(src, dst)):
         dst = src.with_name(f"{src.stem} ({n}).docx")
         n += 1
     return dst
@@ -87,11 +88,11 @@ def convert_files(
     done, failed, notes = [], [], []
     for src in files:
         if src.suffix.lower() not in SUFFIXES:
-            failed.append(f"{src.name}: není soubor .pages ani dokument Wordu")
+            failed.append(f"{src.name}: není soubor .pages, PDF ani dokument Wordu")
             continue
         try:
             dst, warnings = convert_one(src)
-            done.append(dst)
+            done.extend(outputs(src, dst))
             notes += [f"{src.name}: {w}" for w in warnings]
             if open_after:
                 os.startfile(dst)
@@ -264,18 +265,20 @@ def window():
     ).grid(sticky="w")
     ttk.Label(
         frame,
-        text="Tip: soubory .pages i .docx stačí přetáhnout myší na ikonu Pages2Word.exe.\n"
-        "Dokumenty Wordu dostanou vaše styly (uloží se jako kopie).",
+        text="Tip: soubory .pages, .docx i .pdf stačí přetáhnout myší na ikonu "
+        "Pages2Word.exe.\nDokumenty Wordu dostanou vaše styly (uloží se jako kopie), "
+        "z PDF vzniknou dva:\njeden vypadá jako PDF, druhý má vaše styly.",
         foreground="#555",
     ).grid(sticky="w", pady=(2, 14))
 
     def pick():
         names = filedialog.askopenfilenames(
-            title="Vyberte soubory Pages nebo Wordu",
+            title="Vyberte soubory Pages, Wordu nebo PDF",
             filetypes=[
-                ("Pages a Word", "*.pages *.docx *.doc"),
+                ("Pages, Word a PDF", "*.pages *.docx *.doc *.pdf"),
                 ("Dokumenty Pages", "*.pages"),
                 ("Dokumenty Wordu", "*.docx *.doc"),
+                ("PDF", "*.pdf"),
             ],
         )
         if names:

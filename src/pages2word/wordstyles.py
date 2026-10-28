@@ -359,9 +359,12 @@ def load_profile(document) -> Profile:
     else:
         profile = learn(document)
 
-    # Fill roles the template has no style for with the next level up.
+    # Fill roles the template has no style for with the next level up. A title
+    # style the user never used would look foreign: their top heading fits better.
     names = Styles(document.styles.element).by_name
-    if "title" not in profile.roles and "Title" not in names:
+    if "title" not in profile.roles and (
+        "heading1" in profile.roles or "Title" not in names
+    ):
         profile.roles["title"] = profile.roles.get("heading1", "heading 1")
     for n in range(2, 7):
         role = f"heading{n}"

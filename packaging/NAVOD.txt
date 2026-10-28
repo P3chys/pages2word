@@ -47,6 +47,14 @@
    nastavené písmo a zarovnání do bloku zmizí. Původní soubor se nemění.
    Starý formát .doc vyžaduje nainstalovaný Word.
 
+6) PŘEVOD PDF
+   Soubor .pdf přetáhněte na ikonu Pages2Word.exe (nebo "Převést
+   soubory…"). Vzniknou dva dokumenty Wordu:
+   - "Název (PDF).docx" vypadá jako PDF (stejné písmo, odsazení, okraje),
+   - "Název.docx" má stejný obsah, ale vaše styly (viz bod 4 a 5).
+   Nadpisy, odrážky a tabulky jsou skutečné nadpisy, seznamy a tabulky
+   Wordu. Naskenované PDF (jen obrázky stránek) převést nejde.
+
 CO SE PŘEVÁDÍ: text, nadpisy, seznamy, obrázky, tabulky, textová pole,
 poznámky pod čarou a kresby Apple Pencil (jako obrázek vedle textu).
 Objekty, které jsou v Pages připnuté ke stránce (ne k textu), se přidají
