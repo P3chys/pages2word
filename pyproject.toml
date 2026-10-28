@@ -1,6 +1,6 @@
 [project]
 name = "pages2word"
-version = "0.2.0"
+version = "0.3.0"
 description = "Convert Apple Pages documents to clean Word documents"
 readme = "README.md"
 authors = [
